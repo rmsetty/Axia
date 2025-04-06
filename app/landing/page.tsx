@@ -5,7 +5,7 @@ import Image from "next/image"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { DemoSection } from "@/components/demo-section"
-
+HI GUYS
 export default function LandingPage() {
   return (
     <div className="flex min-h-screen flex-col bg-slate-50">
