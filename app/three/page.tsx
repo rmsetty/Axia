@@ -562,14 +562,26 @@ export default function NetworkVisualization() {
         </Button>
       </div>
       <div className="flex gap-2">
-        <Input
-          value={message}
-          onChange={(e) => setMessage(e.target.value)}
-          className="flex-1 border-indigo-200 focus:border-indigo-400 focus:ring-indigo-200"
-          placeholder="Type your message..."
-        />
-        <Button className="bg-indigo-600 hover:bg-indigo-700 text-white">Send</Button>
-      </div>
+  <Input
+    value={message}
+    onChange={(e) => setMessage(e.target.value)}
+    className="flex-1 border-indigo-200 focus:border-indigo-400 focus:ring-indigo-200"
+    placeholder="Type your message..."
+    // Removed the onFocus handler that was disabling controls
+  />
+  <Button 
+    className="bg-indigo-600 hover:bg-indigo-700 text-white"
+    onClick={() => {
+      if (message.trim()) {
+        // Use functional updates to prevent unnecessary re-renders
+        setMessages(prevMessages => [...prevMessages, `You: ${message}`]);
+        setMessage("");
+      }
+    }}
+  >
+    Send
+  </Button>
+</div>
     </div>
   </Card>
 </div>

@@ -14,10 +14,17 @@ const NetworkVisualization3D = ({ nodes = [], links = [], selectedNode = null, o
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const [isNodeInteraction, setIsNodeInteraction] = useState(false);
   const mouseDownRef = useRef(false);
+  const initialNodesPositionsRef = useRef([]);
+  const isInitializedRef = useRef(false);
+  const isDraggingRef = useRef(false);
 
   // Initialize 3D scene once
   useEffect(() => {
     if (!mountRef.current) return;
+    
+    // Only initialize once
+    if (isInitializedRef.current) return;
+    isInitializedRef.current = true;
     
     // Clean up any existing scene
     if (rendererRef.current) {
@@ -48,14 +55,17 @@ const NetworkVisualization3D = ({ nodes = [], links = [], selectedNode = null, o
     renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
     mountRef.current.appendChild(renderer.domElement);
 
-    // Controls setup - using ref for enabled state
+    // Controls setup
     const controls = new OrbitControls(camera, renderer.domElement);
     controlsRef.current = controls;
     controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
     controls.enableRotate = true;
     controls.enablePan = true;
     controls.enableZoom = true;
-
+    controls.minDistance = 2;
+    controls.maxDistance = 10;
+    
     // Add lights
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
     scene.add(ambientLight);
@@ -78,17 +88,9 @@ const NetworkVisualization3D = ({ nodes = [], links = [], selectedNode = null, o
     function animate() {
       animationRef.current = requestAnimationFrame(animate);
       
-      // Only update controls if not interacting with nodes
-      if (!isNodeInteraction) {
+      // Update controls for smooth damping effect but only when appropriate
+      if (controlsRef.current && (isDraggingRef.current || controlsRef.current.enabled)) {
         controls.update();
-      }
-
-      // Add subtle rotation to nodes
-      if (nodeObjectsRef.current) {
-        nodeObjectsRef.current.forEach(node => {
-          node.rotation.x += 0.002;
-          node.rotation.y += 0.002;
-        });
       }
 
       renderer.render(scene, camera);
@@ -98,6 +100,7 @@ const NetworkVisualization3D = ({ nodes = [], links = [], selectedNode = null, o
     // Global mouseup handler
     const handleGlobalMouseUp = () => {
       mouseDownRef.current = false;
+      isDraggingRef.current = false;
     };
 
     window.addEventListener("mouseup", handleGlobalMouseUp);
@@ -111,8 +114,9 @@ const NetworkVisualization3D = ({ nodes = [], links = [], selectedNode = null, o
       if (mountRef.current?.children[0]) {
         mountRef.current.removeChild(mountRef.current.children[0]);
       }
+      isInitializedRef.current = false;
     };
-  }, [isNodeInteraction]);
+  }, []);
 
   // Update scene when nodes or selected node changes
   useEffect(() => {
@@ -132,6 +136,7 @@ const NetworkVisualization3D = ({ nodes = [], links = [], selectedNode = null, o
     
     // Create nodes
     const nodeObjects = [];
+    const nodePositions = [];
     const nodeCount = nodes.length || 50; // Use provided nodes or default to 50
     const geometry = new THREE.SphereGeometry(0.1, 32, 32);
     const material = new THREE.MeshPhongMaterial({ color: "#4f46e5" });
@@ -141,8 +146,8 @@ const NetworkVisualization3D = ({ nodes = [], links = [], selectedNode = null, o
     // Position nodes in a more distributed manner
     for (let i = 0; i < nodeCount; i++) {
       const angle = (i / nodeCount) * Math.PI * 2;
-      const radius = 2 + Math.random();
-      const height = Math.random() * 2 - 1;
+      const radius = 2 + Math.random() * 0.5; // Reduced randomness
+      const height = Math.random() * 1.5 - 0.75; // Reduced randomness
       
       let nodeMaterial;
       
@@ -157,9 +162,17 @@ const NetworkVisualization3D = ({ nodes = [], links = [], selectedNode = null, o
       
       const node = new THREE.Mesh(geometry.clone(), nodeMaterial);
       
-      node.position.x = Math.cos(angle) * radius;
-      node.position.y = height;
-      node.position.z = Math.sin(angle) * radius;
+      // Use stored position if available, otherwise generate new position
+      if (initialNodesPositionsRef.current[i]) {
+        node.position.copy(initialNodesPositionsRef.current[i]);
+      } else {
+        node.position.x = Math.cos(angle) * radius;
+        node.position.y = height;
+        node.position.z = Math.sin(angle) * radius;
+      }
+      
+      // Store the position
+      nodePositions.push(node.position.clone());
       
       node.userData = nodes[i] || { id: `node-${i}` };
       nodeObjects.push(node);
@@ -167,6 +180,11 @@ const NetworkVisualization3D = ({ nodes = [], links = [], selectedNode = null, o
     }
     
     nodeObjectsRef.current = nodeObjects;
+    
+    // Only set initial positions if they haven't been set before
+    if (initialNodesPositionsRef.current.length === 0) {
+      initialNodesPositionsRef.current = nodePositions;
+    }
 
     // Create edges between nodes
     const edgeMaterial = new THREE.LineBasicMaterial({ 
@@ -231,17 +249,12 @@ const NetworkVisualization3D = ({ nodes = [], links = [], selectedNode = null, o
     function onMouseMove(event) {
       event.preventDefault();
       
-      // Prevent orbit controls from being activated when interacting with nodes
+      // Check if mouse is over a node
       const intersectedNode = checkNodeIntersection(event.clientX, event.clientY);
       const isOverNode = !!intersectedNode;
       
-      // Store for use in other handlers
+      // Update node interaction state 
       setIsNodeInteraction(isOverNode);
-      
-      // Disable orbit controls when over a node
-      if (controlsRef.current) {
-        controlsRef.current.enabled = !isOverNode;
-      }
       
       const rect = mountRef.current.getBoundingClientRect();
       
@@ -275,7 +288,12 @@ const NetworkVisualization3D = ({ nodes = [], links = [], selectedNode = null, o
         mountRef.current.style.cursor = 'pointer';
       } else {
         setHoveredNode(null);
-        mountRef.current.style.cursor = 'default';
+        mountRef.current.style.cursor = isDraggingRef.current ? 'grabbing' : 'grab';
+      }
+      
+      // If we're holding the mouse button down, we're likely dragging
+      if (mouseDownRef.current && !isOverNode) {
+        isDraggingRef.current = true;
       }
     }
 
@@ -286,11 +304,16 @@ const NetworkVisualization3D = ({ nodes = [], links = [], selectedNode = null, o
       // Check if clicking on a node
       const intersectedNode = checkNodeIntersection(event.clientX, event.clientY);
       if (intersectedNode) {
+        // We're interacting with a node, disable controls
         event.stopPropagation();
-        
-        // Completely disable controls to prevent any movement
         if (controlsRef.current) {
           controlsRef.current.enabled = false;
+        }
+      } else {
+        // We're clicking on the background, enable controls for dragging
+        if (controlsRef.current) {
+          controlsRef.current.enabled = true;
+          mountRef.current.style.cursor = 'grabbing';
         }
       }
     }
@@ -301,24 +324,31 @@ const NetworkVisualization3D = ({ nodes = [], links = [], selectedNode = null, o
       if (!mouseDownRef.current) return;
       
       const intersectedNode = checkNodeIntersection(event.clientX, event.clientY);
-      if (intersectedNode && onNodeSelect) {
+      
+      // If we weren't dragging and clicked on a node, select it
+      if (!isDraggingRef.current && intersectedNode && onNodeSelect) {
         onNodeSelect(intersectedNode.userData);
       }
       
-      // Re-enable controls regardless
-      if (controlsRef.current) {
-        // Only re-enable if not over a node
-        const isStillOverNode = checkNodeIntersection(event.clientX, event.clientY);
-        controlsRef.current.enabled = !isStillOverNode;
-      }
-      
+      // Reset states
       mouseDownRef.current = false;
+      isDraggingRef.current = false;
+      
+      // Keep controls enabled after drag, reset cursor
+      mountRef.current.style.cursor = 'grab';
     }
 
     // Cancel mouse interaction when leaving the container
     function onMouseLeave() {
       setHoveredNode(null);
       setIsNodeInteraction(false);
+      mouseDownRef.current = false;
+      isDraggingRef.current = false;
+    }
+
+    // Add wheel handler for zooming
+    function onWheel(event) {
+      // We want to allow zooming regardless of node interaction
       if (controlsRef.current) {
         controlsRef.current.enabled = true;
       }
@@ -330,6 +360,7 @@ const NetworkVisualization3D = ({ nodes = [], links = [], selectedNode = null, o
     container.addEventListener('mousedown', onMouseDown, { passive: false });
     container.addEventListener('mouseup', onMouseUp);
     container.addEventListener('mouseleave', onMouseLeave);
+    container.addEventListener('wheel', onWheel, { passive: false });
     
     // Stop context menu from appearing
     function onContextMenu(e) {
@@ -338,11 +369,15 @@ const NetworkVisualization3D = ({ nodes = [], links = [], selectedNode = null, o
     }
     container.addEventListener('contextmenu', onContextMenu);
     
+    // Set initial cursor
+    container.style.cursor = 'grab';
+    
     return () => {
       container.removeEventListener('mousemove', onMouseMove);
       container.removeEventListener('mousedown', onMouseDown);
       container.removeEventListener('mouseup', onMouseUp);
       container.removeEventListener('mouseleave', onMouseLeave);
+      container.removeEventListener('wheel', onWheel);
       container.removeEventListener('contextmenu', onContextMenu);
     };
   }, [hoveredNode, onNodeSelect, isNodeInteraction]);

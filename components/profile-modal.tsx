@@ -44,7 +44,7 @@ export function ProfileModal({ open, onOpenChange, profile }: ProfileModalProps)
             onClick={() => onOpenChange(false)}
             className="absolute right-4 top-4 rounded-full p-1.5 text-indigo-500 transition-colors hover:bg-indigo-50"
           >
-            <X className="h-4 w-4" />
+            {/* <X className="h-4 w-4" /> */}
           </button>
 
           <Avatar className="h-24 w-24 border-4 border-indigo-200 ring-4 ring-indigo-100">
