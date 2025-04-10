@@ -5,7 +5,6 @@ import Image from "next/image"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { DemoSection } from "@/components/demo-section"
-HI GUYS
 export default function LandingPage() {
   return (
     <div className="flex min-h-screen flex-col bg-slate-50">
@@ -20,7 +19,7 @@ export default function LandingPage() {
             <Button variant="outline" className="border-indigo-200 text-indigo-600 hover:bg-indigo-50">
               Sign In
             </Button>
-            <Link href="/dashboard">
+            <Link href="/three">
             <Button className="bg-indigo-600 font-medium shadow-md hover:bg-indigo-700">View Demo</Button>
                     
                   </Link>
@@ -50,7 +49,7 @@ export default function LandingPage() {
                   </p>
                 </div>
                 <div className="flex flex-col sm:flex-row gap-4">
-                  <Link href="/dashboard">
+                  <Link href="/three">
                     <Button size="lg" className="bg-indigo-600 px-8 font-medium shadow-md hover:bg-indigo-700">
                       View Demo
                     </Button>
@@ -63,7 +62,7 @@ export default function LandingPage() {
               </div>
               <div className="relative hidden lg:block">
                 <div className="absolute inset-0 bg-indigo-600/5 rounded-2xl" />
-                <Link href={"/dashboard"}>
+                <Link href={"/three"}>
                 <Image
         src="/demo.png"  // Path relative to the 'public' folder
         width={600}
@@ -354,4 +353,3 @@ export default function LandingPage() {
     </div>
   )
 }
-
