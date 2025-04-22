@@ -1,422 +1,205 @@
-import React, { useRef, useEffect, useState } from "react";
-import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
+"use client";
 
-const NetworkVisualization3D = ({ nodes = [], links = [], selectedNode = null, onNodeSelect }) => {
-  const mountRef = useRef(null);
-  const sceneRef = useRef(null);
-  const rendererRef = useRef(null);
-  const cameraRef = useRef(null);
-  const controlsRef = useRef(null);
-  const nodeObjectsRef = useRef([]);
-  const animationRef = useRef(null);
-  const [hoveredNode, setHoveredNode] = useState(null);
-  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
-  const [isNodeInteraction, setIsNodeInteraction] = useState(false);
-  const mouseDownRef = useRef(false);
-  const initialNodesPositionsRef = useRef([]);
-  const isInitializedRef = useRef(false);
-  const isDraggingRef = useRef(false);
+import React, { useRef, useEffect, useState } from 'react';
+import ForceGraph3D, { GraphData, NodeObject, LinkObject } from 'react-force-graph-3d';
+import { Loader2 } from 'lucide-react';
+import type { Node as NodeType, Edge as EdgeType } from '@/app/three/page';
 
-  // Initialize 3D scene once
-  useEffect(() => {
-    if (!mountRef.current) return;
-    
-    // Only initialize once
-    if (isInitializedRef.current) return;
-    isInitializedRef.current = true;
-    
-    // Clean up any existing scene
-    if (rendererRef.current) {
-      rendererRef.current.dispose();
-    }
-    if (mountRef.current.children[0]) {
-      mountRef.current.removeChild(mountRef.current.children[0]);
-    }
+// Define the structure for tooltip data (optional, but good practice)
+interface TooltipData {
+    node: NodeType;
+    x: number;
+    y: number;
+}
 
-    // Scene setup
-    const scene = new THREE.Scene();
-    sceneRef.current = scene;
-    scene.background = new THREE.Color("#ffffff");
+interface NetworkVisualization3DProps {
+    nodes: NodeType[];
+    links: EdgeType[];
+    selectedNode: NodeType | null;
+    onNodeSelect: (node: NodeType | null) => void;
+}
 
-    // Camera setup
-    const camera = new THREE.PerspectiveCamera(
-      75,
-      mountRef.current.clientWidth / mountRef.current.clientHeight,
-      0.1,
-      1000
-    );
-    cameraRef.current = camera;
-    camera.position.z = 5;
+const NetworkVisualization3D: React.FC<NetworkVisualization3DProps> = ({
+    nodes,
+    links,
+    selectedNode,
+    onNodeSelect
+}) => {
+    const fgRef = useRef<any>();
+    const containerRef = useRef<HTMLDivElement>(null); // Ref for the container div
+    const [isClient, setIsClient] = useState(false);
+    const [tooltip, setTooltip] = useState<TooltipData | null>(null); // State for tooltip content and position
 
-    // Renderer setup
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    rendererRef.current = renderer;
-    renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
-    mountRef.current.appendChild(renderer.domElement);
+    useEffect(() => {
+        setIsClient(true);
+    }, []);
 
-    // Controls setup
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controlsRef.current = controls;
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
-    controls.enableRotate = true;
-    controls.enablePan = true;
-    controls.enableZoom = true;
-    controls.minDistance = 2;
-    controls.maxDistance = 10;
-    
-    // Add lights
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-    scene.add(ambientLight);
-
-    const pointLight = new THREE.PointLight(0xffffff, 1);
-    pointLight.position.set(5, 5, 5);
-    scene.add(pointLight);
-
-    // Handle resize
-    function handleResize() {
-      if (!mountRef.current) return;
-      camera.aspect = mountRef.current.clientWidth / mountRef.current.clientHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
-    }
-
-    window.addEventListener("resize", handleResize);
-
-    // Animation loop
-    function animate() {
-      animationRef.current = requestAnimationFrame(animate);
-      
-      // Update controls for smooth damping effect but only when appropriate
-      if (controlsRef.current && (isDraggingRef.current || controlsRef.current.enabled)) {
-        controls.update();
-      }
-
-      renderer.render(scene, camera);
-    }
-    animate();
-
-    // Global mouseup handler
-    const handleGlobalMouseUp = () => {
-      mouseDownRef.current = false;
-      isDraggingRef.current = false;
+    // --- Function to determine node color ---
+    const getNodeColor = (industry: string | null): string => {
+        switch (industry) {
+            case 'Tech': return '#3b82f6'; // Blue
+            case 'Finance': return '#10b981'; // Emerald
+            case 'Health': return '#ef4444'; // Red
+            case 'Wellness': return '#f97316'; // Orange
+            default: return '#6b7280'; // Gray
+        }
     };
 
-    window.addEventListener("mouseup", handleGlobalMouseUp);
+    // --- Prepare graph data ---
+    // Memoize graphData to prevent unnecessary recalculations if nodes/links don't change often
+    // This is more important if nodes/links can update frequently
+    const graphData: GraphData = React.useMemo(() => ({
+        nodes: nodes.map(node => ({
+            id: node.id,
+            name: node.name,
+            role: node.role,
+            industry: node.industry,
+            skills: node.skills, // Include skills if needed in tooltip
+            color: getNodeColor(node.industry),
+            originalData: node // Keep original data accessible
+        })),
+        links: links.map(link => ({
+            source: link.from,
+            target: link.to,
+        }))
+    }), [nodes, links]); // Dependency array includes nodes and links
 
-    // Cleanup on unmount
-    return () => {
-      window.removeEventListener("resize", handleResize);
-      window.removeEventListener("mouseup", handleGlobalMouseUp);
-      cancelAnimationFrame(animationRef.current);
-      renderer.dispose();
-      if (mountRef.current?.children[0]) {
-        mountRef.current.removeChild(mountRef.current.children[0]);
-      }
-      isInitializedRef.current = false;
+    // --- Camera effect ---
+    useEffect(() => {
+        if (!isClient || !fgRef.current) return;
+
+        if (selectedNode) {
+            const nodeObject = graphData.nodes.find(n => n.id === selectedNode.id);
+            const position = nodeObject?.__threeObj?.position;
+
+            if (position) {
+                const distance = 40;
+                const distRatio = 1 + distance / Math.hypot(position.x, position.y, position.z);
+
+                fgRef.current.cameraPosition(
+                    { x: position.x * distRatio, y: position.y * distRatio, z: position.z * distRatio },
+                    position,
+                    1000
+                );
+            }
+        }
+    }, [selectedNode, isClient, graphData.nodes]);
+
+    // --- Handlers ---
+    const handleNodeClick = (node: NodeObject) => {
+        const originalNodeData = node.originalData as NodeType | undefined;
+        if (originalNodeData) {
+            if (selectedNode && selectedNode.id === originalNodeData.id) {
+                onNodeSelect(null);
+            } else {
+                onNodeSelect(originalNodeData);
+            }
+        }
+        setTooltip(null); // Hide tooltip on click
     };
-  }, []);
 
-  // Update scene when nodes or selected node changes
-  useEffect(() => {
-    if (!sceneRef.current || !cameraRef.current) return;
-    
-    // Clear previous nodes
-    nodeObjectsRef.current.forEach(node => {
-      sceneRef.current.remove(node);
-      node.geometry.dispose();
-      node.material.dispose();
-    });
-    
-    // Remove old edges
-    sceneRef.current.children = sceneRef.current.children.filter(
-      child => !(child instanceof THREE.Line)
-    );
-    
-    // Create nodes
-    const nodeObjects = [];
-    const nodePositions = [];
-    const nodeCount = nodes.length || 50; // Use provided nodes or default to 50
-    const geometry = new THREE.SphereGeometry(0.1, 32, 32);
-    const material = new THREE.MeshPhongMaterial({ color: "#4f46e5" });
-    const selectedMaterial = new THREE.MeshPhongMaterial({ color: "#ef4444" });
-    const hoveredMaterial = new THREE.MeshPhongMaterial({ color: "#10b981" });
-
-    // Position nodes in a more distributed manner
-    for (let i = 0; i < nodeCount; i++) {
-      const angle = (i / nodeCount) * Math.PI * 2;
-      const radius = 2 + Math.random() * 0.5; // Reduced randomness
-      const height = Math.random() * 1.5 - 0.75; // Reduced randomness
-      
-      let nodeMaterial;
-      
-      // Determine material based on selection and hover state
-      if (selectedNode && nodes[i]?.id === selectedNode.id) {
-        nodeMaterial = selectedMaterial.clone();
-      } else if (hoveredNode && nodes[i]?.id === hoveredNode.id) {
-        nodeMaterial = hoveredMaterial.clone();
-      } else {
-        nodeMaterial = material.clone();
-      }
-      
-      const node = new THREE.Mesh(geometry.clone(), nodeMaterial);
-      
-      // Use stored position if available, otherwise generate new position
-      if (initialNodesPositionsRef.current[i]) {
-        node.position.copy(initialNodesPositionsRef.current[i]);
-      } else {
-        node.position.x = Math.cos(angle) * radius;
-        node.position.y = height;
-        node.position.z = Math.sin(angle) * radius;
-      }
-      
-      // Store the position
-      nodePositions.push(node.position.clone());
-      
-      node.userData = nodes[i] || { id: `node-${i}` };
-      nodeObjects.push(node);
-      sceneRef.current.add(node);
-    }
-    
-    nodeObjectsRef.current = nodeObjects;
-    
-    // Only set initial positions if they haven't been set before
-    if (initialNodesPositionsRef.current.length === 0) {
-      initialNodesPositionsRef.current = nodePositions;
-    }
-
-    // Create edges between nodes
-    const edgeMaterial = new THREE.LineBasicMaterial({ 
-      color: "#6366f1",
-      opacity: 0.3,
-      transparent: true 
-    });
-
-    // Create more interesting connection patterns
-    for (let i = 0; i < nodeObjects.length; i++) {
-      // Connect to next 2-3 nodes
-      for (let j = 1; j <= 2 + Math.floor(Math.random() * 2); j++) {
-        const targetIndex = (i + j) % nodeObjects.length;
-        const points = [
-          nodeObjects[i].position,
-          nodeObjects[targetIndex].position
-        ];
-        
-        const edgeGeometry = new THREE.BufferGeometry().setFromPoints(points);
-        const edge = new THREE.Line(edgeGeometry, edgeMaterial);
-        sceneRef.current.add(edge);
-      }
-      
-      // Add some random cross-connections
-      if (Math.random() > 0.7) {
-        const randomTarget = Math.floor(Math.random() * nodeObjects.length);
-        const points = [
-          nodeObjects[i].position,
-          nodeObjects[randomTarget].position
-        ];
-        
-        const edgeGeometry = new THREE.BufferGeometry().setFromPoints(points);
-        const edge = new THREE.Line(edgeGeometry, edgeMaterial);
-        sceneRef.current.add(edge);
-      }
-    }
-
-  }, [nodes, selectedNode, hoveredNode]);
-
-  // Handle hover effects and click events
-  useEffect(() => {
-    if (!mountRef.current || !sceneRef.current || !cameraRef.current || !nodeObjectsRef.current) return;
-    
-    const raycaster = new THREE.Raycaster();
-    const mouse = new THREE.Vector2();
-    
-    // Check if mouse is over a node
-    function checkNodeIntersection(x, y) {
-      if (!mountRef.current || !cameraRef.current) return false;
-      
-      const rect = mountRef.current.getBoundingClientRect();
-      mouse.x = ((x - rect.left) / mountRef.current.clientWidth) * 2 - 1;
-      mouse.y = -((y - rect.top) / mountRef.current.clientHeight) * 2 + 1;
-      
-      raycaster.setFromCamera(mouse, cameraRef.current);
-      const intersects = raycaster.intersectObjects(nodeObjectsRef.current);
-      
-      return intersects.length > 0 ? intersects[0].object : null;
-    }
-    
-    // Mouse move event handler
-    function onMouseMove(event) {
-      event.preventDefault();
-      
-      // Check if mouse is over a node
-      const intersectedNode = checkNodeIntersection(event.clientX, event.clientY);
-      const isOverNode = !!intersectedNode;
-      
-      // Update node interaction state 
-      setIsNodeInteraction(isOverNode);
-      
-      const rect = mountRef.current.getBoundingClientRect();
-      
-      // Calculate mouse position in normalized device coordinates
-      mouse.x = ((event.clientX - rect.left) / mountRef.current.clientWidth) * 2 - 1;
-      mouse.y = -((event.clientY - rect.top) / mountRef.current.clientHeight) * 2 + 1;
-      
-      // Save actual mouse position for tooltip placement
-      setMousePosition({
-        x: event.clientX - rect.left,
-        y: event.clientY - rect.top
-      });
-
-      // Update the raycaster
-      raycaster.setFromCamera(mouse, cameraRef.current);
-      
-      // Check for intersections
-      const intersects = raycaster.intersectObjects(nodeObjectsRef.current);
-      
-      // Handle hover
-      if (intersects.length > 0) {
-        const intersectedObject = intersects[0].object;
-        const userData = intersectedObject.userData;
-        
-        // Only update if we're hovering over a different node
-        if (!hoveredNode || userData.id !== hoveredNode.id) {
-          setHoveredNode(userData);
-        }
-        
-        // Change cursor to pointer to indicate clickable element
-        mountRef.current.style.cursor = 'pointer';
-      } else {
-        setHoveredNode(null);
-        mountRef.current.style.cursor = isDraggingRef.current ? 'grabbing' : 'grab';
-      }
-      
-      // If we're holding the mouse button down, we're likely dragging
-      if (mouseDownRef.current && !isOverNode) {
-        isDraggingRef.current = true;
-      }
-    }
-
-    // Mouse down handler
-    function onMouseDown(event) {
-      mouseDownRef.current = true;
-      
-      // Check if clicking on a node
-      const intersectedNode = checkNodeIntersection(event.clientX, event.clientY);
-      if (intersectedNode) {
-        // We're interacting with a node, disable controls
-        event.stopPropagation();
-        if (controlsRef.current) {
-          controlsRef.current.enabled = false;
-        }
-      } else {
-        // We're clicking on the background, enable controls for dragging
-        if (controlsRef.current) {
-          controlsRef.current.enabled = true;
-          mountRef.current.style.cursor = 'grabbing';
-        }
-      }
-    }
-    
-    // Mouse up handler
-    function onMouseUp(event) {
-      // Only process click if we were down on this element (not dragging from elsewhere)
-      if (!mouseDownRef.current) return;
-      
-      const intersectedNode = checkNodeIntersection(event.clientX, event.clientY);
-      
-      // If we weren't dragging and clicked on a node, select it
-      if (!isDraggingRef.current && intersectedNode && onNodeSelect) {
-        onNodeSelect(intersectedNode.userData);
-      }
-      
-      // Reset states
-      mouseDownRef.current = false;
-      isDraggingRef.current = false;
-      
-      // Keep controls enabled after drag, reset cursor
-      mountRef.current.style.cursor = 'grab';
-    }
-
-    // Cancel mouse interaction when leaving the container
-    function onMouseLeave() {
-      setHoveredNode(null);
-      setIsNodeInteraction(false);
-      mouseDownRef.current = false;
-      isDraggingRef.current = false;
-    }
-
-    // Add wheel handler for zooming
-    function onWheel(event) {
-      // We want to allow zooming regardless of node interaction
-      if (controlsRef.current) {
-        controlsRef.current.enabled = true;
-      }
-    }
-
-    // Add all event listeners
-    const container = mountRef.current;
-    container.addEventListener('mousemove', onMouseMove, { passive: false });
-    container.addEventListener('mousedown', onMouseDown, { passive: false });
-    container.addEventListener('mouseup', onMouseUp);
-    container.addEventListener('mouseleave', onMouseLeave);
-    container.addEventListener('wheel', onWheel, { passive: false });
-    
-    // Stop context menu from appearing
-    function onContextMenu(e) {
-      e.preventDefault();
-      return false;
-    }
-    container.addEventListener('contextmenu', onContextMenu);
-    
-    // Set initial cursor
-    container.style.cursor = 'grab';
-    
-    return () => {
-      container.removeEventListener('mousemove', onMouseMove);
-      container.removeEventListener('mousedown', onMouseDown);
-      container.removeEventListener('mouseup', onMouseUp);
-      container.removeEventListener('mouseleave', onMouseLeave);
-      container.removeEventListener('wheel', onWheel);
-      container.removeEventListener('contextmenu', onContextMenu);
+    const handleBackgroundClick = () => {
+        onNodeSelect(null);
+        setTooltip(null); // Hide tooltip on background click
     };
-  }, [hoveredNode, onNodeSelect, isNodeInteraction]);
 
-  return (
-    <div className="relative w-full h-full">
-      <div ref={mountRef} className="w-full h-full" />
-      
-      {/* Hover info card */}
-      {hoveredNode && (
-        <div 
-          className="absolute bg-white p-3 rounded-lg shadow-md border border-indigo-100 z-10 max-w-xs pointer-events-none"
-          style={{
-            left: `${mousePosition.x + 15}px`,
-            top: `${mousePosition.y - 10}px`,
-            transform: mousePosition.x > (mountRef.current?.clientWidth || 0) - 200 ? 'translateX(-100%)' : 'none'
-          }}
-        >
-          <h4 className="font-medium text-slate-800 mb-1">{hoveredNode.name || `Node ${hoveredNode.id}`}</h4>
-          {hoveredNode.role && (
-            <p className="text-sm text-slate-600 mb-1">
-              <span className="font-medium">Role:</span> {hoveredNode.role}
-            </p>
-          )}
-          {hoveredNode.industry && (
-            <p className="text-sm text-slate-600 mb-1">
-              <span className="font-medium">Industry:</span> {hoveredNode.industry}
-            </p>
-          )}
-          {hoveredNode.skills && hoveredNode.skills.length > 0 && (
-            <div className="text-sm text-slate-600">
-              <span className="font-medium">Skills:</span>{" "}
-              <span className="text-xs">{hoveredNode.skills.join(", ")}</span>
+    // --- Tooltip Handlers ---
+    const handleNodeHover = (node: NodeObject | null) => {
+        if (node) {
+            // Keep existing tooltip position if available, otherwise wait for mouse move
+            setTooltip(prev => ({
+                node: node.originalData as NodeType,
+                x: prev?.x ?? 0, // Use previous X or default
+                y: prev?.y ?? 0, // Use previous Y or default
+            }));
+        } else {
+            setTooltip(null); // Clear tooltip when hover ends
+        }
+    };
+
+    // Track mouse move *within the container* to position the tooltip
+    const handleMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
+        if (tooltip && containerRef.current) {
+             // Calculate position relative to the container
+            const rect = containerRef.current.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+
+            // Check if mouse is still within container bounds (optional, avoids tooltip sticking at edge)
+            if (x >= 0 && x <= rect.width && y >= 0 && y <= rect.height) {
+                setTooltip(prev => (prev ? { ...prev, x, y } : null));
+            } else {
+                // Mouse left the container, maybe hide tooltip? Or keep last position?
+                // setTooltip(null); // Option: hide if mouse leaves container
+            }
+        }
+    };
+
+
+    // --- Conditional Rendering ---
+    if (!isClient) {
+        return (
+            <div className="w-full h-full flex items-center justify-center bg-slate-50/50">
+                <Loader2 className="h-6 w-6 animate-spin text-indigo-400" />
+                <span className="ml-2 text-sm text-slate-500">Initializing 3D View...</span>
             </div>
-          )}
+        );
+    }
+
+    // Render the graph and the tooltip
+    return (
+        // Add a container div to capture mouse events and position the tooltip
+        <div
+            ref={containerRef}
+            className="w-full h-full relative" // Position relative is crucial for absolute positioning of children
+            onMouseMove={handleMouseMove} // Track mouse movement here
+        >
+            <ForceGraph3D
+                ref={fgRef}
+                graphData={graphData}
+                // nodeLabel={undefined} // Disable default basic tooltip if using custom one
+                nodeColor={node => getNodeColor((node as any).industry)}
+                nodeRelSize={6}
+                linkWidth={0.5}
+                linkColor={() => 'rgba(100, 100, 100, 0.5)'}
+                backgroundColor="rgba(255, 255, 255, 0)" // Transparent background
+                onNodeClick={handleNodeClick}
+                onNodeHover={handleNodeHover} // <-- Add hover handler
+                onBackgroundClick={handleBackgroundClick}
+                nodeOpacity={1}
+                nodeResolution={16}
+                enableNodeDrag={false}
+            />
+
+            {/* Custom Tooltip Card */}
+            {tooltip && (
+                <div
+                    className="absolute bg-white rounded-md shadow-lg p-3 border border-gray-200 text-xs text-slate-700 pointer-events-none" // pointer-events-none prevents tooltip from blocking graph interactions
+                    style={{
+                        left: `${tooltip.x + 15}px`, // Position tooltip slightly offset from cursor
+                        top: `${tooltip.y + 10}px`,
+                        zIndex: 100, // Ensure tooltip is above the canvas
+                        maxWidth: '250px', // Optional: constrain width
+                        transform: `translate(calc(-50% + ${tooltip.x + 15 < 125 ? 50 : 0}px), calc(-50% + ${tooltip.y + 10 < 50 ? 50 : 0}px))`, // Adjust position near edges (simple example)
+
+                    }}
+                >
+                    <div className="font-bold text-sm mb-1 text-slate-800">{tooltip.node.name}</div>
+                    {tooltip.node.role && (
+                        <div><span className="font-semibold">Role:</span> {tooltip.node.role}</div>
+                    )}
+                    {tooltip.node.industry && (
+                        <div><span className="font-semibold">Industry:</span> {tooltip.node.industry}</div>
+                    )}
+                    {tooltip.node.skills && tooltip.node.skills.length > 0 && (
+                         <div className="mt-1 pt-1 border-t border-gray-100">
+                            <span className="font-semibold">Skills:</span> {tooltip.node.skills.join(', ')}
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
-      )}
-    </div>
-  );
+    );
 };
 
 export default NetworkVisualization3D;
