@@ -106,7 +106,7 @@ export function ProfileModal({ open, onOpenChange, profile }: ProfileModalProps)
               </div>
             </div>
            )}
-
+           
             {/* Add New Contact Button - Functionality needs implementation */}
             <Link href="/new-contact" className="w-full"> {/* Wrap button in Link */}
                 <Button className="mt-8 w-full bg-indigo-600 font-medium text-white hover:bg-indigo-700 shadow-md transition-colors">

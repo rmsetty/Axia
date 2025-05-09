@@ -1,52 +1,60 @@
-// src/components/ClientGraphRenderer.tsx
 "use client";
 
-import React from 'react';
+import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { Loader2 } from 'lucide-react';
+import type { Node, Edge } from '@/app/three/page';
 
-// Import types from the main page or a shared types file
-// Make sure this path is correct relative to this file
-import type { Node as NodeType, Edge as EdgeType } from '@/app/three/page';
-
-// --- Dynamic Import for the actual 3D component ---
+// Dynamically import the NetworkVisualization3D component with no SSR
 const NetworkVisualization3D = dynamic(
-  () => import('@/components/NetworkVisualization3D'), // Path to your 3D component
-  {
-    ssr: false, // Disable SSR is crucial
+  () => import('./NetworkVisualization3D'),
+  { 
+    ssr: false,
     loading: () => (
-      <div className="w-full h-full flex items-center justify-center bg-slate-50/50 rounded-lg">
-        <Loader2 className="h-8 w-8 animate-spin text-indigo-500" />
-        <span className="ml-3 text-slate-600">Loading 3D Graph...</span>
+      <div className="w-full h-full flex items-center justify-center bg-slate-50/50">
+        <Loader2 className="h-6 w-6 animate-spin text-indigo-400" />
+        <span className="ml-2 text-sm text-slate-500">Loading 3D View...</span>
       </div>
-    ),
+    )
   }
 );
 
-// --- Props for the Renderer ---
 interface ClientGraphRendererProps {
-    nodes: NodeType[];
-    links: EdgeType[];
-    selectedNode: NodeType | null;
-    onNodeSelect: (node: NodeType | null) => void;
+  nodes: Node[];
+  links: Edge[];
+  selectedNode: Node | null;
+  onNodeSelect: (node: Node | null) => void;
 }
 
-// --- The Wrapper Component ---
-const ClientGraphRenderer: React.FC<ClientGraphRendererProps> = ({
-    nodes,
-    links,
-    selectedNode,
-    onNodeSelect
+const ClientGraphRenderer: React.FC<ClientGraphRendererProps> = ({ 
+  nodes, 
+  links, 
+  selectedNode, 
+  onNodeSelect 
 }) => {
-    // This component is marked "use client" and handles the dynamic import.
+  const [isClient, setIsClient] = useState(false);
+  
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
+
+  if (!isClient) {
     return (
-        <NetworkVisualization3D
-            nodes={nodes}
-            links={links}
-            selectedNode={selectedNode}
-            onNodeSelect={onNodeSelect}
-        />
+      <div className="w-full h-full flex items-center justify-center bg-slate-50/50">
+        <Loader2 className="h-6 w-6 animate-spin text-indigo-400" />
+        <span className="ml-2 text-sm text-slate-500">Initializing Renderer...</span>
+      </div>
     );
+  }
+
+  return (
+    <NetworkVisualization3D
+      nodes={nodes}
+      links={links}
+      selectedNode={selectedNode}
+      onNodeSelect={onNodeSelect}
+    />
+  );
 };
 
 export default ClientGraphRenderer;

@@ -178,7 +178,7 @@ export function DemoSection() {
               </TabsTrigger>
             </TabsList>
           </div>
-
+          
           <div className="grid lg:grid-cols-5 gap-0">
             <div className="lg:col-span-3 border-r border-indigo-100">
               <TabsContent value="visualization" className="m-0">

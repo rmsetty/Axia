@@ -1,43 +1,41 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react"; // Added useCallback
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ChevronDown, HelpCircle, Settings, Heart, Loader2 } from "lucide-react";
+import { ChevronDown, HelpCircle, Settings, Heart, Loader2, Send } from "lucide-react"; // Added Send icon
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
-// Import the new wrapper component
-import ClientGraphRenderer from "@/components/ClientGraphRenderer"; // Corrected import path
+import ClientGraphRenderer from "@/components/ClientGraphRenderer";
 import { ProfileModal } from "@/components/profile-modal";
-// --- Type Definitions ---
-// Keep these mostly the same, but align with DB potentially (e.g. avatar_url)
+
+// --- Type Definitions (Keep these as they are) ---
 export type Node = {
-  id: number // Corresponds to nodes.id
+  id: number
   name: string
-  role: string | null // Allow null based on schema
-  industry: string | null // Allow null based on schema
-  skills: string[] | null // Allow null based on schema
+  role: string | null
+  industry: string | null
+  skills: string[] | null
 }
 
 export type Edge = {
-  from: number // Corresponds to edges.from_node_id
-  to: number // Corresponds to edges.to_node_id
+  from: number
+  to: number
 }
 
-// Update Profile type to match DB structure + relations
 export type Profile = {
-  node_id: number // Primary key, links to node.id
-  name: string // Fetched from associated node
-  role: string | null // Fetched from associated node
+  node_id: number
+  name: string
+  role: string | null
   location: string | null
   avatar_url: string | null
   bio: string | null
   tagline: string | null
-  experience: Experience[] // Array fetched separately or via join
-  education: Education[]   // Array fetched separately or via join
+  experience: Experience[]
+  education: Education[]
 }
 
 export type Experience = {
@@ -46,7 +44,7 @@ export type Experience = {
   role: string
   company: string
   period: string | null
-  type?: string | null // Make optional/nullable based on schema
+  type?: string | null
 }
 
 export type Education = {
@@ -55,7 +53,19 @@ export type Education = {
   school: string
   degree: string | null
   period: string | null
-  logo_url: string | null // Changed from logo
+  logo_url: string | null
+}
+
+// Structure for chat messages state
+type ChatMessage = {
+  sender: 'user' | 'ai';
+  text: string;
+};
+
+// Structure for Gemini history format
+type GeminiHistoryPart = {
+  role: 'user' | 'model';
+  parts: { text: string }[];
 }
 
 // --- Component ---
@@ -72,9 +82,12 @@ export default function NetworkVisualization() {
   const [skillFilter, setSkillFilter] = useState("")
   const [industryFilter, setIndustryFilter] = useState("")
 
-  // Chat (remains client-side state)
-  const [messages, setMessages] = useState<string[]>([])
-  const [inputMessage, setInputMessage] = useState("") // Renamed from message for clarity
+  // Chat State
+  const [messages, setMessages] = useState<ChatMessage[]>([]) // Use ChatMessage type
+  const [inputMessage, setInputMessage] = useState("")
+  const [isChatLoading, setIsChatLoading] = useState(false); // Loading state for AI response
+  const chatContainerRef = useRef<HTMLDivElement>(null); // Ref for scrolling chat
+
 
   // Profile Modal State
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false)
@@ -90,19 +103,18 @@ export default function NetworkVisualization() {
         // Fetch Nodes
         const { data: nodesData, error: nodesError } = await supabase
           .from('nodes')
-          .select('id, name, role, industry, skills');
+          .select('*');
 
         if (nodesError) throw new Error(`Failed to fetch nodes: ${nodesError.message}`);
         setNodes(nodesData || []);
-
+        
         // Fetch Edges
         const { data: edgesData, error: edgesError } = await supabase
           .from('edges')
-          .select('from_node_id, to_node_id');
-
+          .select('*');
+        
         if (edgesError) throw new Error(`Failed to fetch edges: ${edgesError.message}`);
 
-        // Map DB column names to component prop names
         const formattedEdges = edgesData?.map(edge => ({
           from: edge.from_node_id,
           to: edge.to_node_id,
@@ -118,26 +130,76 @@ export default function NetworkVisualization() {
     };
 
     fetchData();
-  }, []); // Empty dependency array means run once on mount
+  }, []);
+
+   // --- Scroll Chat Area Effect ---
+   useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [messages]); // Run whenever messages change
 
   // --- Filtering Logic ---
   const filteredNodes = nodes.filter(
     (node) =>
       (!roleFilter || node.role === roleFilter) &&
-      (!skillFilter || node.skills?.includes(skillFilter)) && // Handle potential null skills array
+      (!skillFilter || node.skills?.includes(skillFilter)) &&
       (!industryFilter || node.industry === industryFilter),
   );
 
-  // --- Event Handlers ---
-  const sendMessage = () => {
-    if (inputMessage.trim()) {
-      setMessages([...messages, `You: ${inputMessage}`])
-      setInputMessage("")
-    }
-  }
+  // --- Chat Handler ---
+  const handleSendMessage = useCallback(async () => {
+    const trimmedMessage = inputMessage.trim();
+    if (!trimmedMessage || isChatLoading) return; // Prevent empty messages or sending while loading
 
-  // Function to handle opening the profile modal and fetching profile data
-  const handleViewProfile = async (nodeToView?: Node) => {
+    const newUserMessage: ChatMessage = { sender: 'user', text: trimmedMessage };
+    setMessages(prev => [...prev, newUserMessage]); // Add user message immediately
+    setInputMessage(""); // Clear input
+    setIsChatLoading(true); // Set loading state
+
+    // Prepare history for Gemini API
+    const chatHistoryForApi: GeminiHistoryPart[] = messages.map(msg => ({
+        role: msg.sender === 'user' ? 'user' : 'model',
+        parts: [{ text: msg.text }]
+    }));
+
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          message: trimmedMessage,
+          nodes: nodes, // Send all nodes for context
+          edges: edges, // Send all edges for context
+          selectedNode: selectedNode, // Send currently selected node (can be null)
+          chatHistory: chatHistoryForApi, // Send previous messages
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `API request failed with status ${response.status}`);
+      }
+
+      const data = await response.json();
+      const aiMessage: ChatMessage = { sender: 'ai', text: data.reply || "Sorry, I couldn't get a response." };
+      setMessages(prev => [...prev, aiMessage]); // Add AI response
+
+    } catch (error: any) {
+      console.error("Chat API error:", error);
+      const errorMessage: ChatMessage = { sender: 'ai', text: `Error: ${error.message}` };
+      setMessages(prev => [...prev, errorMessage]); // Show error in chat
+    } finally {
+      setIsChatLoading(false); // Clear loading state
+    }
+  }, [inputMessage, isChatLoading, nodes, edges, selectedNode, messages]); // Include dependencies
+
+
+  // --- Profile Modal Handler (no changes needed here) ---
+  const handleViewProfile = useCallback(async (nodeToView?: Node) => {
+    // ... (keep existing handleViewProfile logic)
       const targetNode = nodeToView || selectedNode;
       if (!targetNode) return;
 
@@ -197,11 +259,11 @@ export default function NetworkVisualization() {
       } finally {
           setIsProfileLoading(false);
       }
-  };
+  }, [selectedNode]); // Keep dependencies for handleViewProfile
+
 
   // --- Rendering ---
 
-  // Display Loading or Error State
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -218,16 +280,17 @@ export default function NetworkVisualization() {
       </div>
     );
   }
-
+  
   return (
-    <div> {/* Removed min-h-screen and bg-slate-50 for flexibility */}
+    <div>
       {/* Main Content Area */}
       <main>
-        {/* Header remains the same */}
+        {/* Header (no changes) */}
         <header className="flex items-center justify-between border-b bg-white px-6 py-4 shadow-md sticky top-0 z-10">
-          <div className="flex items-center space-x-2 text-sm">
+            {/* ... header content ... */}
+             <div className="flex items-center space-x-2 text-sm">
             <span className="font-medium text-slate-600">Made with</span>
-            <Heart className="h-4 w-4 text-red-500" fill="currentColor" />
+            <Heart className="h-4 w-4 text-red-500 " />
             <Link href="#" className="font-medium text-indigo-600 hover:underline">
               Learn More →
             </Link>
@@ -249,9 +312,10 @@ export default function NetworkVisualization() {
         </header>
 
         <div className="max-w-7xl mx-auto p-8 space-y-6">
-          {/* Filters and Title */}
+          {/* Filters and Title (no changes) */}
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-2xl font-bold text-slate-800 border-l-4 border-indigo-600 pl-4">
+             {/* ... filters and title ... */}
+             <h2 className="text-2xl font-bold text-slate-800 border-l-4 border-indigo-600 pl-4">
               Network Visualization
             </h2>
             <div className="flex gap-4">
@@ -303,10 +367,10 @@ export default function NetworkVisualization() {
 
           {/* Visualization and Chat Cards */}
           <div className="flex flex-col md:flex-row gap-4">
-             {/* Visualization Card */}
-              <Card className="bg-white shadow-md border border-indigo-100 rounded-lg overflow-hidden md:w-1/2">
-                 {/* Ensure NetworkVisualization3D is passed the correct props */}
-                  <div className="w-full h-[375px] rounded-lg">
+            {/* Visualization Card (no changes) */}
+            <Card className="bg-white shadow-md border border-indigo-100 rounded-lg overflow-hidden md:w-1/2">
+                {/* ... visualization content ... */}
+                 <div className="w-full h-[375px] rounded-lg">
                       {visualizationType === "3d" ? (
                              <ClientGraphRenderer
                              nodes={filteredNodes}
@@ -355,26 +419,46 @@ export default function NetworkVisualization() {
                           </div>
                       )}
                   </div>
-              </Card>
+            </Card>
 
-              {/* Chat Card */}
-             <Card className="bg-white shadow-md border border-indigo-100 rounded-lg p-6 space-y-4 md:w-1/2">
-                <h2 className="text-lg font-medium text-slate-800 border-l-4 border-indigo-600 pl-4">Chat</h2>
-                 {/* Chat message display area */}
-                 <div className="min-h-[200px] h-[200px] overflow-y-auto bg-indigo-50/50 rounded-lg p-4 border border-indigo-100 space-y-2">
-                    {messages.length === 0 ? (
-                       <p className="text-sm text-slate-500 italic text-center pt-16">Chat messages will appear here...</p>
-                    ) : (
-                       messages.map((msg, index) => (
-                         <p key={index} className="text-sm text-slate-700">{msg}</p>
-                       ))
-                    )}
-                 </div>
-                 {/* View Type Buttons */}
-                <div className="space-y-4">
-                  <div className="flex gap-2">
-                    {/* Buttons to switch view type */}
-                    <Button
+            {/* Chat Card - Updated */}
+            <Card className="bg-white shadow-md border border-indigo-100 rounded-lg p-6 space-y-4 md:w-1/2 flex flex-col"> {/* Added flex flex-col */}
+              <h2 className="text-lg font-medium text-slate-800 border-l-4 border-indigo-600 pl-4">Chat with AI</h2>
+              {/* Chat message display area */}
+              <div ref={chatContainerRef} className="flex-grow min-h-[200px] max-h-[300px] overflow-y-auto bg-indigo-50/50 rounded-lg p-4 border border-indigo-100 space-y-3"> {/* Adjusted height & spacing */}
+                {messages.length === 0 && !isChatLoading ? (
+                  <p className="text-sm text-slate-500 italic text-center pt-16">Ask about the network or selected person...</p>
+                ) : (
+                  messages.map((msg, index) => (
+                    <div key={index} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                      <div
+                        className={`max-w-[80%] px-3 py-1.5 rounded-lg text-sm ${
+                          msg.sender === 'user'
+                            ? 'bg-indigo-600 text-white'
+                            : 'bg-slate-200 text-slate-800'
+                        }`}
+                      >
+                        {/* Render newlines correctly */}
+                        {msg.text.split('\n').map((line, i) => (
+                            <span key={i}>{line}<br/></span>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                )}
+                {/* Loading Indicator */}
+                {isChatLoading && (
+                    <div className="flex justify-start">
+                         <div className="px-3 py-1.5 rounded-lg text-sm bg-slate-200 text-slate-500 italic animate-pulse">
+                            AI is thinking...
+                         </div>
+                    </div>
+                )}
+              </div>
+              {/* View Type Buttons (Keep as is) */}
+              <div className="flex gap-2 pt-2">
+                  {/* ... view type buttons ... */}
+                   <Button
                       variant={visualizationType === "3d" ? "default" : "outline"}
                       onClick={() => setVisualizationType("3d")}
                       className={`flex-1 ${
@@ -399,31 +483,33 @@ export default function NetworkVisualization() {
                     >
                       List
                     </Button>
-                  </div>
-                  {/* Chat Input */}
-                  <div className="flex gap-2">
-                    <Input
-                      value={inputMessage}
-                      onChange={(e) => setInputMessage(e.target.value)}
-                      className="flex-1 border-indigo-200 focus:border-indigo-400 focus:ring-indigo-200"
-                      placeholder="Type your message..."
-                       onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-                    />
-                    <Button
-                      className="bg-indigo-600 hover:bg-indigo-700 text-white"
-                      onClick={sendMessage}
-                    >
-                      Send
-                    </Button>
-                  </div>
-                </div>
-              </Card>
+              </div>
+              {/* Chat Input - Updated */}
+              <div className="flex gap-2">
+                <Input
+                  value={inputMessage}
+                  onChange={(e) => setInputMessage(e.target.value)}
+                  className="flex-1 border-indigo-200 focus:border-indigo-400 focus:ring-indigo-200"
+                  placeholder={isChatLoading ? "Waiting for response..." : "Ask AI about the network..."}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+                  disabled={isChatLoading} // Disable input while loading
+                />
+                <Button
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50"
+                  onClick={handleSendMessage}
+                  disabled={isChatLoading || !inputMessage.trim()} // Disable button while loading or if input is empty
+                >
+                  {isChatLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                </Button>
+              </div>
+            </Card>
           </div>
 
-          {/* Selected Node Info Card (Only in 3D view) */}
+          {/* Selected Node Info Card (no changes) */}
           {visualizationType === "3d" && selectedNode && (
             <Card className="mt-4 bg-white shadow-md border border-indigo-100 rounded-lg overflow-hidden">
-              <CardHeader className="bg-gradient-to-r from-white to-indigo-50/30 pb-4">
+              {/* ... selected node card content ... */}
+               <CardHeader className="bg-gradient-to-r from-white to-indigo-50/30 pb-4">
                 <CardTitle className="text-slate-800">Selected Node Information</CardTitle>
               </CardHeader>
               <CardContent className="pt-6">
@@ -459,9 +545,9 @@ export default function NetworkVisualization() {
         </div>
       </main>
 
-      {/* Profile Modal */}
-      {/* Ensure ProfileModal receives the correct profile structure */}
-      {selectedProfile && (
+      {/* Profile Modal (no changes) */}
+      {/* ... profile modal rendering ... */}
+       {selectedProfile && (
         <ProfileModal
           open={isProfileModalOpen}
           onOpenChange={setIsProfileModalOpen}
@@ -477,3 +563,9 @@ export default function NetworkVisualization() {
     </div>
   )
 }
+
+// --- Keep NetworkVisualization3D and ProfileModal components as they are ---
+// ... (NetworkVisualization3D component code) ...
+// ... (ProfileModal component code) ...
+// Make sure ClientGraphRenderer component is correctly imported and used
+// ... (ClientGraphRenderer component code if it's in this file, otherwise ensure import path is correct)
